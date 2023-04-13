@@ -5,12 +5,12 @@ import rawpy
 from PIL import Image
 import threading
 import time
-import piexif
+import exifread
+from fractions import Fraction
 
 def process_images(batch_size=10):
-    def save_image(save_path, average_image, exif_bytes):
-        img = Image.fromarray(np.uint8(average_image))
-        img.save(save_path, exif=exif_bytes)
+    def save_image(save_path, average_image):
+        Image.fromarray(np.uint8(average_image)).save(save_path)
         update_status("Averaged image saved successfully.")
 
     def update_status(message):
@@ -31,6 +31,8 @@ def process_images(batch_size=10):
 
     update_status("Starting to process images...")
 
+    total_exposure_time = 0
+
     for i in range(0, total_files, batch_size):
         batch_paths = file_paths[i:i+batch_size]
         batch_images = []
@@ -43,11 +45,17 @@ def process_images(batch_size=10):
             progress = (i + index + 1) / total_files * 100
             update_status(f"Processed image {i + index + 1}/{total_files} ({progress:.2f}% completed)")
 
+            # Read EXIF data and sum exposure times
+            if index == 0:
+                with open(file_path, "rb") as f:
+                    tags = exifread.process_file(f)
+                    exposure_time_tag = "EXIF ExposureTime"
+                    exposure_time = Fraction(tags[exposure_time_tag].values[0])
+                    total_exposure_time += exposure_time
+
         batch_stacked_image = np.stack(batch_images, axis=0)
         if i == 0:
             stacked_image = batch_stacked_image
-            exif_dict = piexif.load(file_path)
-            exif_bytes = piexif.dump(exif_dict)
         else:
             stacked_image = np.concatenate((stacked_image, batch_stacked_image), axis=0)
 
@@ -55,13 +63,12 @@ def process_images(batch_size=10):
 
     update_status("Saving the averaged image as a TIFF file...")
 
-    save_thread = threading.Thread(target=save_image, args=(save_path, average_image, exif_bytes))
+    save_thread = threading.Thread(target=save_image, args=(save_path, average_image))
     save_thread.start()
 
     while save_thread.is_alive():
         update_status("Saving in progress...")
         time.sleep(1)
-
 
 def on_start_button_click():
     threading.Thread(target=process_images, daemon=True).start()
