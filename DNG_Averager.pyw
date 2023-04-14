@@ -7,69 +7,76 @@ import threading
 import time
 import subprocess
 import os
+import queue
 
 exiftool_path = "C:\\Program Files (x86)\\exiftool\\exiftool.exe"
-processing_lock = threading.Lock()
+message_queue = queue.Queue()
 
-def process_images(batch_size=10):
+def process_images_thread(batch_size=10):
     def save_image(save_path, average_image):
         try:
             img_with_exif = Image.fromarray(np.uint8(average_image))
             img_with_exif.save(save_path)
             subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path])
             os.remove(save_path + "_original")
-            update_status("Averaged image saved successfully.")
+            message_queue.put(("status", "Averaged image saved successfully."))
         except Exception as e:
-            update_status("Error while saving the image: " + str(e))
+            message_queue.put(("status", "Error while saving the image: " + str(e)))
 
-    def update_status(message):
-        status_var.set(message)
-        status_label.update()
+    file_paths = filedialog.askopenfilenames(title="Select .dng files", filetypes=[("DNG files", "*.dng")])
 
-    def update_progress(value, max_value):
-        progress_var.set(value)
-        progress_bar.configure(maximum=max_value)
-        progress_bar.update()
+    if not file_paths:
+        message_queue.put(("status", "No files selected."))
+        return
 
-    with processing_lock:
-        file_paths = filedialog.askopenfilenames(title="Select .dng files", filetypes=[("DNG files", "*.dng")])
+    save_path = filedialog.asksaveasfilename(title="Save as", defaultextension=".tiff", filetypes=[("TIFF files", "*.tiff")])
 
-        if not file_paths:
-            update_status("No files selected.")
+    if not save_path:
+        message_queue.put(("status", "No save path specified."))
+        return
+
+    total_files = len(file_paths)
+    message_queue.put(("status", "Starting to process images..."))
+
+    batch_images = []
+    total_exposure_time = 0
+
+    for index, file_path in enumerate(file_paths):
+        with rawpy.imread(file_path) as raw:
+            img = raw.postprocess()
+            batch_images.append(img)
+
+        try:
+            exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
+            exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
+            total_exposure_time += exposure_time
+        except subprocess.CalledProcessError as e:
+            message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
             return
 
-        save_path = filedialog.asksaveasfilename(title="Save as", defaultextension=".tiff", filetypes=[("TIFF files", "*.tiff")])
+        if (index + 1) % batch_size == 0 or (index + 1) == total_files:
+            average_image = np.mean(batch_images, axis=0)
+            save_image(save_path, average_image)
+            batch_images.clear()
 
-        if not save_path:
-            update_status("No save path specified.")
-            return
+            message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
+            message_queue.put(("progress", index + 1, total_files))
 
-        total_files = len(file_paths)
-        update_status("Starting to process images...")
+def process_images():
+    threading.Thread(target=process_images_thread).start()
 
-        batch_images = []
-        total_exposure_time = 0
+def update_ui():
+    try:
+        message, *args = message_queue.get(block=False)
+        if message == "status":
+            status_var.set(args[0])
+        elif message == "progress":
+            progress_var.set(args[0])
+            progress_bar.configure(maximum=args[1])
+    except queue.Empty:
+        pass
 
-        for index, file_path in enumerate(file_paths):
-            with rawpy.imread(file_path) as raw:
-                img = raw.postprocess()
-                batch_images.append(img)
-
-            try:
-                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
-                exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
-                total_exposure_time += exposure_time
-            except subprocess.CalledProcessError as e:
-                update_status("Error while reading EXIF data: " + str(e))
-                return
-
-            if (index + 1) % batch_size == 0 or (index + 1) == total_files:
-                average_image = np.mean(batch_images, axis=0)
-                threading.Thread(target=save_image, args=(save_path, average_image)).start()
-                batch_images.clear()
-
-                update_status(f"Processed {index + 1}/{total_files} images")
-                update_progress(index + 1, total_files)
+    app.after(100, update_ui)
 
 app = tk.Tk()
 app.title("DNG Averager")
@@ -88,6 +95,6 @@ progress_var = tk.IntVar()
 progress_bar = ttk.Progressbar(frame, variable=progress_var, mode='determinate')
 progress_bar.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
 
+app.after(100, update_ui)
 app.mainloop()
-
 
