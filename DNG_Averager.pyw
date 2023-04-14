@@ -4,13 +4,18 @@ import numpy as np
 import rawpy
 from PIL import Image
 import threading
-import time
 import subprocess
 import os
 import queue
+import concurrent.futures
 
 exiftool_path = "C:\\Program Files (x86)\\exiftool\\exiftool.exe"
 message_queue = queue.Queue()
+
+def process_single_image(file_path):
+    with rawpy.imread(file_path) as raw:
+        img = raw.postprocess()
+    return img
 
 def process_images_thread(batch_size=10):
     def save_image(save_path, average_image):
@@ -41,28 +46,30 @@ def process_images_thread(batch_size=10):
     batch_images = []
     total_exposure_time = 0
 
-    for index, file_path in enumerate(file_paths):
-        with rawpy.imread(file_path) as raw:
-            img = raw.postprocess()
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for index, (file_path, img) in enumerate(zip(file_paths, executor.map(process_single_image, file_paths))):
             batch_images.append(img)
 
-        try:
-            exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
-            exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
-            total_exposure_time += exposure_time
-        except subprocess.CalledProcessError as e:
-            message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
-            return
+            try:
+                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
+                exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
+                total_exposure_time += exposure_time
+            except subprocess.CalledProcessError as e:
+                message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
+                return
 
-        if (index + 1) % batch_size == 0 or (index + 1) == total_files:
-            average_image = np.mean(batch_images, axis=0)
-            save_image(save_path, average_image)
-            batch_images.clear()
+            if (index + 1) % batch_size == 0 or (index + 1) == total_files:
+                average_image = np.mean(batch_images, axis=0)
+                save_image(save_path, average_image)
+                batch_images.clear()
 
-            message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
-            message_queue.put(("progress", index + 1, total_files))
+                message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
+                message_queue.put(("progress", index + 1, total_files))
+
+    message_queue.put(("done",))
 
 def process_images():
+    select_files_button.grid_remove()
     threading.Thread(target=process_images_thread).start()
 
 def update_ui():
@@ -70,9 +77,11 @@ def update_ui():
         message, *args = message_queue.get(block=False)
         if message == "status":
             status_var.set(args[0])
-        elif message == "progress":
+        elif message        == "progress":
             progress_var.set(args[0])
             progress_bar.configure(maximum=args[1])
+        elif message == "done":
+            select_files_button.grid()
     except queue.Empty:
         pass
 
@@ -85,7 +94,8 @@ frame = ttk.Frame(app, padding="10 10 10 10")
 frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
 ttk.Label(frame, text="Select DNG files to average:").grid(row=0, column=0, sticky=tk.W)
-ttk.Button(frame, text="Select files", command=process_images).grid(row=0, column=1, sticky=tk.E)
+select_files_button = ttk.Button(frame, text="Select files", command=process_images)
+select_files_button.grid(row=0, column=1, sticky=tk.E)
 
 status_var = tk.StringVar()
 status_label = ttk.Label(frame, textvariable=status_var)
