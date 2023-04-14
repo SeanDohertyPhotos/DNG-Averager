@@ -100,23 +100,29 @@ def update_ui():
 
 app = tk.Tk()
 app.title("DNG Averager")
+app.configure(bg='#f0f0f0')
 
-frame = ttk.Frame(app, padding="10 10 10 10")
+frame = ttk.Frame(app, padding="20 20 20 20")
 frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-files_label = ttk.Label(frame, text="Select DNG files to average:")
-files_label.grid(row=0, column=0, sticky=tk.W)
+title_font = ('Arial', 14, 'bold')
+label_font = ('Arial', 12)
+
+title_label = ttk.Label(frame, text="DNG Averager", font=title_font)
+title_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 20))
+
+files_label = ttk.Label(frame, text="Select DNG files to average:", font=label_font)
+files_label.grid(row=1, column=0, sticky=tk.W, padx=(10, 0))
 select_files_button = ttk.Button(frame, text="Select files", command=process_images)
-select_files_button.grid(row=0, column=1, sticky=tk.E)
+select_files_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
 
 status_var = tk.StringVar()
-status_label = ttk.Label(frame, textvariable=status_var)
-status_label.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E))
+status_label = ttk.Label(frame, textvariable=status_var, font=label_font)
+status_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=(20, 0))
 
 progress_var = tk.IntVar()
 progress_bar = ttk.Progressbar(frame, variable=progress_var, mode='determinate')
-progress_bar.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+progress_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
 
 app.after(100, update_ui)
 app.mainloop()
-
