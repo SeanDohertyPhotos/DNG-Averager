@@ -93,7 +93,8 @@ app.title("DNG Averager")
 frame = ttk.Frame(app, padding="10 10 10 10")
 frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-ttk.Label(frame, text="Select DNG files to average:").grid(row=0, column=0, sticky=tk.W)
+files_label = ttk.Label(frame, text="Select DNG files to average:")
+files_label.grid(row=0, column=0, sticky=tk.W)
 select_files_button = ttk.Button(frame, text="Select files", command=process_images)
 select_files_button.grid(row=0, column=1, sticky=tk.E)
 
@@ -108,3 +109,23 @@ progress_bar.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 
 app.after(100, update_ui)
 app.mainloop()
 
+def process_images():
+    select_files_button.grid_remove()
+    files_label.grid_remove()
+    threading.Thread(target=process_images_thread).start()
+
+def update_ui():
+    try:
+        message, *args = message_queue.get(block=False)
+        if message == "status":
+            status_var.set(args[0])
+        elif message == "progress":
+            progress_var.set(args[0])
+            progress_bar.configure(maximum=args[1])
+        elif message == "done":
+            select_files_button.grid()
+            files_label.grid()
+    except queue.Empty:
+        pass
+
+    app.after(100, update_ui)
