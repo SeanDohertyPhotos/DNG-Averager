@@ -8,6 +8,7 @@ import subprocess
 import os
 import queue
 import concurrent.futures
+import psutil
 
 exiftool_path = "C:\\Program Files (x86)\\exiftool\\exiftool.exe"
 message_queue = queue.Queue()
@@ -62,24 +63,34 @@ def process_images_thread():
         images = list(executor.map(process_single_image, file_paths))
         average_image = np.mean(images, axis=0)
 
-        for file_path in file_paths:
+        for index, file_path in enumerate(file_paths):
             try:
                 exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
                 exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
                 total_exposure_time += exposure_time
+
+                message_queue.put(("progress", index + 1, total_files))
+                message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
+
+                cpu_percent = psutil.cpu_percent()
+                memory_percent = psutil.virtual_memory().percent
+                details_var.set(f"Batch size: {batch_size}\nThreads: {os.cpu_count()}\nCPU utilization: {cpu_percent}%\nMemory utilization: {memory_percent}%")
+
             except subprocess.CalledProcessError as e:
                 message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
                 message_queue.put(("done",))
                 return
 
     save_image(save_path, average_image)
-    message_queue.put(("status", f"Processed {total_files}/{total_files} images"))
     message_queue.put(("progress", total_files, total_files))
     message_queue.put(("done",))
 
 def process_images():
     select_files_button.grid_remove()
     files_label.grid_remove()
+    status_label.grid()
+    progress_bar.grid()
+    details_label.grid()
     threading.Thread(target=process_images_thread).start()
 
 def update_ui():
@@ -93,6 +104,9 @@ def update_ui():
         elif message == "done":
             select_files_button.grid()
             files_label.grid()
+            status_label.grid_remove()
+            progress_bar.grid_remove()
+            details_label.grid_remove()
     except queue.Empty:
         pass
 
@@ -124,5 +138,14 @@ progress_var = tk.IntVar()
 progress_bar = ttk.Progressbar(frame, variable=progress_var, mode='determinate')
 progress_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
 
+details_var = tk.StringVar()
+details_label = ttk.Label(frame, textvariable=details_var, font=label_font, wraplength=400, justify=tk.LEFT)
+details_label.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=(20, 0))
+
+status_label.grid_remove()
+progress_bar.grid_remove()
+details_label.grid_remove()
+
 app.after(100, update_ui)
 app.mainloop()
+
