@@ -1,11 +1,12 @@
 # DNG Averager
 
-DNG Averager is a simple Python-based graphical application that helps photographers average a series of DNG images to reduce noise and improve image quality. The program provides real-time progress feedback, a preview image during processing, and the ability to stop the process at any time.
+DNG Averager is a simple Python-based graphical application that helps photographers average a series of DNG images to combine exposures into a longer exposure, reduce noise and improve image quality. The program provides real-time progress feedback, a preview image during processing, and the ability to stop the process at any time.
 
 ## Features
 
 - User-friendly graphical interface
-- Support for multiple DNG image files
+- Support for large numbers multiple DNG image files
+- Optomized for multithreaded CPU's and utlizes a batching method.
 - Real-time progress updates
 - Preview image during processing
 - Option to stop the process at any time
