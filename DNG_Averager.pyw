@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 import numpy as np
 import rawpy
-from PIL import Image
+from PIL import Image, ImageTk
 import threading
 import subprocess
 import os
@@ -17,6 +17,13 @@ def process_single_image(file_path):
     with rawpy.imread(file_path) as raw:
         img = raw.postprocess()
     return img
+
+def update_preview_image(img_array):
+    img = Image.fromarray(np.uint8(img_array))
+    img.thumbnail((600, 600))
+    img_tk = ImageTk.PhotoImage(img)
+    preview_image_label.config(image=img_tk)
+    preview_image_label.image = img_tk
 
 def process_images_thread():
     def save_image(save_path, average_image):
@@ -58,13 +65,21 @@ def process_images_thread():
 
     batch_size = max(1, min(total_files // 4, os.cpu_count()))
     total_exposure_time = 0
+    stop_process = False
+
+    
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        images = list(executor.map(process_single_image, file_paths))
-        average_image = np.mean(images, axis=0)
-
         for index, file_path in enumerate(file_paths):
             try:
+                img = process_single_image(file_path)
+                if index == 0:
+                    average_image = img
+                else:
+                    average_image = (average_image * index + img) / (index + 1)
+                    if index % 5 == 0:
+                        message_queue.put(("update_preview_image", average_image))
+
                 exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
                 exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
                 total_exposure_time += exposure_time
@@ -76,22 +91,33 @@ def process_images_thread():
                 memory_percent = psutil.virtual_memory().percent
                 details_var.set(f"Batch size: {batch_size}\nThreads: {os.cpu_count()}\nCPU utilization: {cpu_percent}%\nMemory utilization: {memory_percent}%")
 
+                if stop_process:
+                    message_queue.put(("status", "Process stopped by the user"))
+                    break
+
             except subprocess.CalledProcessError as e:
                 message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
                 message_queue.put(("done",))
                 return
 
-    save_image(save_path, average_image)
-    message_queue.put(("progress", total_files, total_files))
-    message_queue.put(("done",))
+    if not stop_process:
+        save_image(save_path, average_image)
+        message_queue.put(("progress", total_files, total_files))
+        message_queue.put(("done",))
 
 def process_images():
     select_files_button.grid_remove()
+    stop_button.grid()
     files_label.grid_remove()
     status_label.grid()
     progress_bar.grid()
     details_label.grid()
+    preview_image_label.grid()
     threading.Thread(target=process_images_thread).start()
+
+def stop_process():
+    global stop_process
+    stop_process = True
 
 def update_ui():
     try:
@@ -102,11 +128,18 @@ def update_ui():
             progress_var.set(args[0])
             progress_bar.configure(maximum=args[1])
         elif message == "done":
+            stop_button.grid_remove()
             select_files_button.grid()
             files_label.grid()
             status_label.grid_remove()
             progress_bar.grid_remove()
             details_label.grid_remove()
+            preview_image_label.grid_remove()
+            app.bell()
+            status_var.set("Finished!")
+        elif message == "update_preview_image":
+            update_preview_image(args[0])
+
     except queue.Empty:
         pass
 
@@ -136,16 +169,25 @@ status_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 
 
 progress_var = tk.IntVar()
 progress_bar = ttk.Progressbar(frame, variable=progress_var, mode='determinate')
-progress_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
+progress_bar.grid(row=3, column=0,columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
 
 details_var = tk.StringVar()
 details_label = ttk.Label(frame, textvariable=details_var, font=label_font, wraplength=400, justify=tk.LEFT)
 details_label.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=(20, 0))
 
+preview_image_label = ttk.Label(frame)
+preview_image_label.grid(row=5, column=0, columnspan=2, padx=(10, 10), pady=(20, 0))
+
+stop_button = ttk.Button(frame, text="Stop", command=stop_process)
+stop_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
+
 status_label.grid_remove()
 progress_bar.grid_remove()
 details_label.grid_remove()
+preview_image_label.grid_remove()
+stop_button.grid_remove()
 
 app.after(100, update_ui)
 app.mainloop()
+
 
