@@ -9,8 +9,12 @@ import os
 import queue
 import concurrent.futures
 import psutil
+import sys
+import os
 
-exiftool_path = "C:\\Program Files (x86)\\exiftool\\exiftool.exe"
+script_directory = os.path.dirname(os.path.abspath(sys.argv[0]))
+exiftool_path = os.path.join(script_directory, "exiftool.exe")
+
 message_queue = queue.Queue()
 
 def process_single_image(file_path):
@@ -25,8 +29,25 @@ def update_preview_image(img_array):
     preview_image_label.config(image=img_tk)
     preview_image_label.image = img_tk
 
+def restart_application():
+    global stop_process
+    stop_process = False
+    restart_button.grid_remove()
+    select_files_button.grid()
+    files_label.grid()
+    status_label.grid_remove()
+    progress_bar.grid_remove()
+    details_label.grid_remove()
+    preview_image_label.grid_remove()
+    status_var.set("")
+
 def process_images_thread():
     def save_image(save_path, average_image):
+        if average_image is None:
+            message_queue.put(("status", "Error: No images were processed."))
+            message_queue.put(("done",))
+            return
+
         try:
             img_with_exif = Image.fromarray(np.uint8(average_image))
             img_with_exif.save(save_path)
@@ -66,15 +87,14 @@ def process_images_thread():
     batch_size = max(1, min(total_files // 4, os.cpu_count()))
     total_exposure_time = 0
     stop_process = False
-
-    
+    average_image = None
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for index, file_path in enumerate(file_paths):
             try:
                 img = process_single_image(file_path)
                 if index == 0:
-                    average_image = img
+                    average_image = img                
                 else:
                     average_image = (average_image * index + img) / (index + 1)
                     if index % 5 == 0:
@@ -139,6 +159,8 @@ def update_ui():
             status_var.set("Finished!")
         elif message == "update_preview_image":
             update_preview_image(args[0])
+        elif message == "restart":
+            restart_button.grid()
 
     except queue.Empty:
         pass
@@ -164,12 +186,12 @@ select_files_button = ttk.Button(frame, text="Select files", command=process_ima
 select_files_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
 
 status_var = tk.StringVar()
-status_label = ttk.Label(frame, textvariable=status_var, font=label_font)
+status_label= ttk.Label(frame, textvariable=status_var, font=label_font)
 status_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=(20, 0))
 
 progress_var = tk.IntVar()
 progress_bar = ttk.Progressbar(frame, variable=progress_var, mode='determinate')
-progress_bar.grid(row=3, column=0,columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
+progress_bar.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 10), pady=(10, 0))
 
 details_var = tk.StringVar()
 details_label = ttk.Label(frame, textvariable=details_var, font=label_font, wraplength=400, justify=tk.LEFT)
@@ -181,11 +203,15 @@ preview_image_label.grid(row=5, column=0, columnspan=2, padx=(10, 10), pady=(20,
 stop_button = ttk.Button(frame, text="Stop", command=stop_process)
 stop_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
 
+restart_button = ttk.Button(frame, text="Restart", command=restart_application)
+restart_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
+
 status_label.grid_remove()
 progress_bar.grid_remove()
 details_label.grid_remove()
 preview_image_label.grid_remove()
 stop_button.grid_remove()
+restart_button.grid_remove()
 
 app.after(100, update_ui)
 app.mainloop()
