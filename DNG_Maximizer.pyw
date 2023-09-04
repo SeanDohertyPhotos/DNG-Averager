@@ -42,18 +42,18 @@ def restart_application():
     status_var.set("")
 
 def process_images_thread():
-    def save_image(save_path, average_image):
-        if average_image is None:
+    def save_image(save_path, max_image):
+        if max_image is None:
             message_queue.put(("status", "Error: No images were processed."))
             message_queue.put(("done",))
             return
 
         try:
-            img_with_exif = Image.fromarray(np.uint8(average_image))
+            img_with_exif = Image.fromarray(np.uint8(max_image))
             img_with_exif.save(save_path)
-            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path])
             os.remove(save_path + "_original")
-            message_queue.put(("status", "Averaged image saved successfully."))
+            message_queue.put(("status", "Maximizedd image saved successfully."))
         except Exception as e:
             message_queue.put(("status", "Error while saving the image: " + str(e)))
 
@@ -87,20 +87,21 @@ def process_images_thread():
     batch_size = max(1, min(total_files // 4, os.cpu_count()))
     total_exposure_time = 0
     stop_process = False
-    average_image = None
+    max_image = None
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for index, file_path in enumerate(file_paths):
             try:
                 img = process_single_image(file_path)
                 if index == 0:
-                    average_image = img                
+                    max_image = img                
                 else:
-                    average_image = (average_image * index + img) / (index + 1)
+                    max_image = np.maximum(max_image, img)
                     if index % 5 == 0:
-                        message_queue.put(("update_preview_image", average_image))
+                        message_queue.put(("update_preview_image", max_image))
 
-                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path], creationflags=subprocess.CREATE_NO_WINDOW)
+
+                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
                 exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
                 total_exposure_time += exposure_time
 
@@ -121,7 +122,7 @@ def process_images_thread():
                 return
 
     if not stop_process:
-        save_image(save_path, average_image)
+        save_image(save_path, max_image)
         message_queue.put(("progress", total_files, total_files))
         message_queue.put(("done",))
 
@@ -168,7 +169,7 @@ def update_ui():
     app.after(100, update_ui)
 
 app = tk.Tk()
-app.title("DNG Averager")
+app.title("DNG Maximizer")
 app.configure(bg='#f0f0f0')
 
 frame = ttk.Frame(app, padding="20 20 20 20")
@@ -177,10 +178,10 @@ frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 title_font = ('Arial', 14, 'bold')
 label_font = ('Arial', 12)
 
-title_label = ttk.Label(frame, text="DNG Averager", font=title_font)
+title_label = ttk.Label(frame, text="DNG Maximizer", font=title_font)
 title_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 20))
 
-files_label = ttk.Label(frame, text="Select DNG files to average:", font=label_font)
+files_label = ttk.Label(frame, text="Select DNG files to Maximizer:", font=label_font)
 files_label.grid(row=1, column=0, sticky=tk.W, padx=(10, 0))
 select_files_button = ttk.Button(frame, text="Select files", command=process_images)
 select_files_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
