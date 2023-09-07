@@ -51,7 +51,7 @@ def process_images_thread():
         try:
             img_with_exif = Image.fromarray(np.uint8(max_image))
             img_with_exif.save(save_path)
-            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path])
+            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             os.remove(save_path + "_original")
             message_queue.put(("status", "Maximizedd image saved successfully."))
         except Exception as e:
@@ -101,7 +101,7 @@ def process_images_thread():
                         message_queue.put(("update_preview_image", max_image))
 
 
-                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path])
+                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
                 total_exposure_time += exposure_time
 
