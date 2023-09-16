@@ -4,16 +4,14 @@ import numpy as np
 import rawpy
 from PIL import Image, ImageTk
 import threading
-import subprocess
 import os
 import queue
 import concurrent.futures
 import psutil
 import sys
-import os
+import pyexifinfo as pex
 
 script_directory = os.path.dirname(os.path.abspath(sys.argv[0]))
-exiftool_path = os.path.join(script_directory, "exiftool.exe")
 
 message_queue = queue.Queue()
 
@@ -51,8 +49,9 @@ def process_images_thread():
         try:
             img_with_exif = Image.fromarray(np.uint8(max_image))
             img_with_exif.save(save_path)
-            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            os.remove(save_path + "_original")
+            # You might need to still use the external exiftool to write EXIF data back
+            # subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # os.remove(save_path + "_original")
             message_queue.put(("status", "Maximizedd image saved successfully."))
         except Exception as e:
             message_queue.put(("status", "Error while saving the image: " + str(e)))
@@ -100,9 +99,8 @@ def process_images_thread():
                     if index % 5 == 0:
                         message_queue.put(("update_preview_image", max_image))
 
-
-                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
+                data = pex.get_json(file_path)
+                exposure_time = float(data[0]['ExposureTime'])
                 total_exposure_time += exposure_time
 
                 message_queue.put(("progress", index + 1, total_files))
@@ -116,7 +114,7 @@ def process_images_thread():
                     message_queue.put(("status", "Process stopped by the user"))
                     break
 
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
                 message_queue.put(("done",))
                 return
@@ -216,5 +214,3 @@ restart_button.grid_remove()
 
 app.after(100, update_ui)
 app.mainloop()
-
-
