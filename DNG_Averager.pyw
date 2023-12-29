@@ -10,18 +10,21 @@ import queue
 import concurrent.futures
 import psutil
 import sys
-import os
 
+# Get the script directory and the path to exiftool
 script_directory = os.path.dirname(os.path.abspath(sys.argv[0]))
 exiftool_path = os.path.join(script_directory, "exiftool.exe")
 
+# Queue for inter-thread communication
 message_queue = queue.Queue()
 
+# Function to process a single image file
 def process_single_image(file_path):
     with rawpy.imread(file_path) as raw:
         img = raw.postprocess()
-    return img
+    return img.astype(np.float32)  # Convert to float32
 
+# Function to update the preview image in the UI
 def update_preview_image(img_array):
     img = Image.fromarray(np.uint8(img_array))
     img.thumbnail((600, 600))
@@ -29,6 +32,7 @@ def update_preview_image(img_array):
     preview_image_label.config(image=img_tk)
     preview_image_label.image = img_tk
 
+# Function to restart the application
 def restart_application():
     global stop_process
     stop_process = False
@@ -41,6 +45,7 @@ def restart_application():
     preview_image_label.grid_remove()
     status_var.set("")
 
+# Function to process the images in a separate thread
 def process_images_thread():
     def save_image(save_path, average_image):
         if average_image is None:
@@ -49,7 +54,9 @@ def process_images_thread():
             return
 
         try:
-            img_with_exif = Image.fromarray(np.uint8(average_image))
+            # Convert the average image to uint8 and save
+            average_image = np.clip(average_image, 0, 255).astype(np.uint8)
+            img_with_exif = Image.fromarray(average_image)
             img_with_exif.save(save_path)
             subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], creationflags=subprocess.CREATE_NO_WINDOW)
             os.remove(save_path + "_original")
