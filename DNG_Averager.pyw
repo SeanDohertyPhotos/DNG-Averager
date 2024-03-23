@@ -18,22 +18,22 @@ exiftool_path = os.path.join(script_directory, "exiftool.exe")
 # Queue for inter-thread communication
 message_queue = queue.Queue()
 
-# Function to process a single image file
 def process_single_image(file_path):
+    """Process a single image file and return the image array."""
     with rawpy.imread(file_path) as raw:
         img = raw.postprocess()
     return img.astype(np.float32)  # Convert to float32
 
-# Function to update the preview image in the UI
-def update_preview_image(img_array):
-    img = Image.fromarray(np.uint8(img_array))
+def update_preview_image(average_image_array):
+    """Update the preview image in the UI."""
+    img = Image.fromarray(np.uint8(average_image_array))
     img.thumbnail((600, 600))
     img_tk = ImageTk.PhotoImage(img)
     preview_image_label.config(image=img_tk)
     preview_image_label.image = img_tk
 
-# Function to restart the application
 def restart_application():
+    """Restart the application."""
     global stop_process
     stop_process = False
     restart_button.grid_remove()
@@ -45,9 +45,10 @@ def restart_application():
     preview_image_label.grid_remove()
     status_var.set("")
 
-# Function to process the images in a separate thread
 def process_images_thread():
+    """Process the images in a separate thread."""
     def save_image(save_path, average_image):
+        """Save the averaged image with EXIF data."""
         if average_image is None:
             message_queue.put(("status", "Error: No images were processed."))
             message_queue.put(("done",))
@@ -58,7 +59,8 @@ def process_images_thread():
             average_image = np.clip(average_image, 0, 255).astype(np.uint8)
             img_with_exif = Image.fromarray(average_image)
             img_with_exif.save(save_path)
-            subprocess.run([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], creationflags=subprocess.CREATE_NO_WINDOW)
+            with subprocess.Popen([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], creationflags=subprocess.CREATE_NO_WINDOW) as process:
+                process.wait()
             os.remove(save_path + "_original")
             message_queue.put(("status", "Averaged image saved successfully."))
         except Exception as e:
@@ -66,73 +68,76 @@ def process_images_thread():
 
     try:
         file_paths = filedialog.askopenfilenames(title="Select .dng files", filetypes=[("DNG files", "*.dng")])
-    except Exception as e:
-        message_queue.put(("status", "Error while selecting files: " + str(e)))
-        message_queue.put(("done",))
-        return
+        if not file_paths:
+            message_queue.put(("status", "No files selected."))
+            message_queue.put(("done",))
+            return
 
-    if not file_paths:
-        message_queue.put(("status", "No files selected."))
-        message_queue.put(("done",))
-        return
-
-    try:
         save_path = filedialog.asksaveasfilename(title="Save as", defaultextension=".tiff", filetypes=[("TIFF files", "*.tiff")])
+        if not save_path:
+            message_queue.put(("status", "No save path specified."))
+            message_queue.put(("done",))
+            return
+
+        total_files = len(file_paths)
+        message_queue.put(("status", "Starting to process images..."))
+
+        batch_size = max(1, min(total_files // 4, os.cpu_count()))
+        total_exposure_time = 0
+        stop_process = False
+        average_image = None
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for file_path in file_paths:
+                future = executor.submit(process_single_image, file_path)
+                futures.append(future)
+
+            for index, future in enumerate(concurrent.futures.as_completed(futures)):
+                try:
+                    img = future.result()
+                    if index == 0:
+                        average_image = img
+                    else:
+                        average_image = (average_image * index + img) / (index + 1)
+                        if index % 5 == 0:
+                            message_queue.put(("update_preview_image", average_image))
+
+                    with subprocess.Popen([exiftool_path, "-ExposureTime", file_paths[index]], creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                        stdout, stderr = process.communicate()
+                        if process.returncode == 0:
+                            exposure_time = float(stdout.decode("utf-8").strip().split(":")[-1].strip())
+                            total_exposure_time += exposure_time
+                        else:
+                            message_queue.put(("status", "Error while reading EXIF data: " + stderr.decode("utf-8")))
+
+                    message_queue.put(("progress", index + 1, total_files))
+                    message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
+
+                    cpu_percent = psutil.cpu_percent()
+                    memory_percent = psutil.virtual_memory().percent
+                    details_var.set(f"Batch size: {batch_size}\nThreads: {os.cpu_count()}\nCPU utilization: {cpu_percent}%\nMemory utilization: {memory_percent}%")
+
+                    if stop_process:
+                        message_queue.put(("status", "Process stopped by the user"))
+                        break
+
+                except Exception as e:
+                    message_queue.put(("status", "Error while processing image: " + str(e)))
+                    message_queue.put(("done",))
+                    return
+
+        if not stop_process:
+            save_image(save_path, average_image)
+            message_queue.put(("progress", total_files, total_files))
+            message_queue.put(("done",))
+
     except Exception as e:
-        message_queue.put(("status", "Error while specifying save path: " + str(e)))
-        message_queue.put(("done",))
-        return
-
-    if not save_path:
-        message_queue.put(("status", "No save path specified."))
-        message_queue.put(("done",))
-        return
-
-    total_files = len(file_paths)
-    message_queue.put(("status", "Starting to process images..."))
-
-    batch_size = max(1, min(total_files // 4, os.cpu_count()))
-    total_exposure_time = 0
-    stop_process = False
-    average_image = None
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        for index, file_path in enumerate(file_paths):
-            try:
-                img = process_single_image(file_path)
-                if index == 0:
-                    average_image = img                
-                else:
-                    average_image = (average_image * index + img) / (index + 1)
-                    if index % 5 == 0:
-                        message_queue.put(("update_preview_image", average_image))
-
-                exiftool_output = subprocess.check_output([exiftool_path, "-ExposureTime", file_path], creationflags=subprocess.CREATE_NO_WINDOW)
-                exposure_time = float(exiftool_output.decode("utf-8").strip().split(":")[-1].strip())
-                total_exposure_time += exposure_time
-
-                message_queue.put(("progress", index + 1, total_files))
-                message_queue.put(("status", f"Processed {index + 1}/{total_files} images"))
-
-                cpu_percent = psutil.cpu_percent()
-                memory_percent = psutil.virtual_memory().percent
-                details_var.set(f"Batch size: {batch_size}\nThreads: {os.cpu_count()}\nCPU utilization: {cpu_percent}%\nMemory utilization: {memory_percent}%")
-
-                if stop_process:
-                    message_queue.put(("status", "Process stopped by the user"))
-                    break
-
-            except subprocess.CalledProcessError as e:
-                message_queue.put(("status", "Error while reading EXIF data: " + str(e)))
-                message_queue.put(("done",))
-                return
-
-    if not stop_process:
-        save_image(save_path, average_image)
-        message_queue.put(("progress", total_files, total_files))
+        message_queue.put(("status", "An error occurred: " + str(e)))
         message_queue.put(("done",))
 
 def process_images():
+    """Start processing the images."""
     select_files_button.grid_remove()
     stop_button.grid()
     files_label.grid_remove()
@@ -143,32 +148,34 @@ def process_images():
     threading.Thread(target=process_images_thread).start()
 
 def stop_process():
+    """Stop the image processing."""
     global stop_process
     stop_process = True
 
 def update_ui():
+    """Update the UI based on messages from the queue."""
     try:
-        message, *args = message_queue.get(block=False)
-        if message == "status":
-            status_var.set(args[0])
-        elif message == "progress":
-            progress_var.set(args[0])
-            progress_bar.configure(maximum=args[1])
-        elif message == "done":
-            stop_button.grid_remove()
-            select_files_button.grid()
-            files_label.grid()
-            status_label.grid_remove()
-            progress_bar.grid_remove()
-            details_label.grid_remove()
-            preview_image_label.grid_remove()
-            app.bell()
-            status_var.set("Finished!")
-        elif message == "update_preview_image":
-            update_preview_image(args[0])
-        elif message == "restart":
-            restart_button.grid()
-
+        while True:
+            message, *args = message_queue.get(block=False)
+            if message == "status":
+                status_var.set(args[0])
+            elif message == "progress":
+                progress_var.set(args[0])
+                progress_bar.configure(maximum=args[1])
+            elif message == "done":
+                stop_button.grid_remove()
+                select_files_button.grid()
+                files_label.grid()
+                status_label.grid_remove()
+                progress_bar.grid_remove()
+                details_label.grid_remove()
+                preview_image_label.grid_remove()
+                app.bell()
+                status_var.set("Finished!")
+            elif message == "update_preview_image":
+                update_preview_image(args[0])
+            elif message == "restart":
+                restart_button.grid()
     except queue.Empty:
         pass
 
@@ -193,7 +200,7 @@ select_files_button = ttk.Button(frame, text="Select files", command=process_ima
 select_files_button.grid(row=1, column=1, sticky=tk.E, padx=(0, 10))
 
 status_var = tk.StringVar()
-status_label= ttk.Label(frame, textvariable=status_var, font=label_font)
+status_label = ttk.Label(frame, textvariable=status_var, font=label_font)
 status_label.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), padx=(10, 0), pady=(20, 0))
 
 progress_var = tk.IntVar()
@@ -222,5 +229,3 @@ restart_button.grid_remove()
 
 app.after(100, update_ui)
 app.mainloop()
-
-
