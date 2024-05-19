@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 import numpy as np
 import rawpy
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ExifTags
 import threading
 import subprocess
 import os
@@ -20,20 +20,14 @@ result_queue = queue.Queue()
 
 def process_image(file_path, index, total_files):
     """Process a single image file and return the result."""
+    exposure_time = 0
     with rawpy.imread(file_path) as raw:
         img = raw.postprocess().astype(np.float32)
-
-    with subprocess.Popen([exiftool_path, "-ExposureTime", file_path], creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-        stdout, stderr = process.communicate()
-        if process.returncode == 0:
-            exposure_time_str = stdout.decode("utf-8").strip().split(":")[-1].strip()
-            try:
-                exposure_time = float(exposure_time_str)
-            except ValueError:
-                exposure_time = float(Fraction(exposure_time_str))
-        else:
-            exposure_time = 0
-
+    with Image.open(file_path) as image:
+        img_exif = image.getexif()
+        for (k,v) in img_exif.items():
+            if ExifTags.TAGS.get(k) == 'ExposureTime':
+                exposure_time = v
     result_queue.put((index, img, exposure_time))
     progress_var.set(index + 1)
     status_var.set(f"Processed image {index + 1}/{total_files}")
@@ -48,14 +42,17 @@ def update_preview_image(average_image_array):
     preview_image_label.image = img_tk
 
 def process_images_thread(file_paths, save_path):
-    """Process the selected images in a separate thread."""
+    """Process the selected images into the queue"""
     total_files = len(file_paths)
-    total_exposure_time = 0
-    average_image = None
 
     for index, file_path in enumerate(file_paths):
         process_image(file_path, index, total_files)
-
+        
+def average_images_thread(file_paths, save_path):
+    """Average queued images"""
+    total_files = len(file_paths)
+    total_exposure_time = 0
+    average_image = None
     processed_count = 0
     while processed_count < total_files:
         try:
@@ -80,11 +77,11 @@ def process_images_thread(file_paths, save_path):
 
     # Save the averaged image with EXIF data
     average_image = np.clip(average_image, 0, 255).astype(np.uint8)
-    img_with_exif = Image.fromarray(average_image)
-    img_with_exif.save(save_path)
-    with subprocess.Popen([exiftool_path, "-tagsFromFile", file_paths[0], "-ExposureTime=" + str(total_exposure_time), save_path], creationflags=subprocess.CREATE_NO_WINDOW) as process:
-        process.wait()
-    os.remove(save_path + "_original")
+    img = Image.fromarray(average_image)
+    img_exif = img.getexif()
+    # 33434 exif ExposureTime numerical code
+    img_exif[33434] = total_exposure_time
+    img.save(save_path, exif=img_exif)
 
     status_var.set("Finished!")
     app.bell()
@@ -105,8 +102,13 @@ def process_images():
     progress_var.set(0)
     progress_bar.config(maximum=len(file_paths))
 
-    thread = threading.Thread(target=process_images_thread, args=(file_paths, save_path))
-    thread.start()
+    threads = [
+    threading.Thread(target=process_images_thread, args=(file_paths, save_path)),
+    threading.Thread(target=average_images_thread, args=(file_paths, save_path)),
+    ]
+
+    for t in threads:
+        t.start()
 
 app = tk.Tk()
 app.title("DNG Averager")
