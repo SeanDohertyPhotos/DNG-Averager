@@ -55,7 +55,8 @@ def process_images_thread(file_paths, save_path):
 
     for index, file_path in enumerate(file_paths):
         process_image(file_path, index, total_files)
-
+        
+def average_images_thread(file_paths, save_path):
     processed_count = 0
     while processed_count < total_files:
         try:
@@ -105,8 +106,16 @@ def process_images():
     progress_var.set(0)
     progress_bar.config(maximum=len(file_paths))
 
-    thread = threading.Thread(target=process_images_thread, args=(file_paths, save_path))
-    thread.start()
+    threads = [
+    threading.Thread(target=process_images_thread, args=(file_paths, save_path)),
+    threading.Thread(target=average_images_thread, args=(file_paths, save_path)),
+    ]
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
 
 app = tk.Tk()
 app.title("DNG Averager")
