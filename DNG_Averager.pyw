@@ -48,15 +48,17 @@ def update_preview_image(average_image_array):
     preview_image_label.image = img_tk
 
 def process_images_thread(file_paths, save_path):
-    """Process the selected images in a separate thread."""
+    """Process the selected images into the queue"""
     total_files = len(file_paths)
-    total_exposure_time = 0
-    average_image = None
 
     for index, file_path in enumerate(file_paths):
         process_image(file_path, index, total_files)
         
 def average_images_thread(file_paths, save_path):
+    """Average queued images"""
+    total_files = len(file_paths)
+    total_exposure_time = 0
+    average_image = None
     processed_count = 0
     while processed_count < total_files:
         try:
